@@ -1,0 +1,140 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: s3-sqs-lamdas-dynamodb-httpapi-sandbox
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: '2'
+
+custom:
+  bucket: vimiju-from-storage-full-cycle-to-sqs
+  tableName: "tasks-vimiju-${self:provider.stage}"
+  sqs_arn: arn:aws:sqs:${opt:region, self:provider.region}:530260462866:vehicle-queue-${self:provider.stage}
+
+provider:
+  name: aws
+  runtime: ruby2.7
+  lambdaHashingVersion: 20201221
+  stage: dev
+  region: us-west-2
+  memorySize: 128
+  environment:
+    QUEUE_URL: { Ref: S3Queue }
+    REGION: ${self:provider.region}
+    TASKS_TABLE: ${self:custom.tableName}
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "s3:GetObject"
+      Resource: "arn:aws:s3:::${self:custom.bucket}/*"
+    - Effect: Allow
+      Action:
+        - "sqs:SendMessage"
+      Resource: arn:aws:sqs:*:*:S3Queue
+    - Effect: Allow
+          Action:
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:BatchWriteItem
+          Resource:
+            - Fn::GetAtt: [TasksTable, Arn]
+    - Effect: Allow
+      Action:
+        - "sqs:*"
+      Resource: arn:aws:sqs:${opt:region, self:provider.region}:*:vehicle-queue-${self:provider.stage}
+    - Effect: Allow
+      Action:
+        - "xray:PutTraceSegments"
+        - "xray:PutTelemetryRecords"
+      Resource: "*"
+
+functions:
+  send-s3-to-sqs:
+    handler: src/handlers/s3/send_to_sqs.call
+    events:
+      - s3: ${self:custom.bucket}
+
+  save-sqs-to-dynamodb:
+    handler: src/handlers/sqs/save_to_dynamodb.call
+    events:
+      - sqs:
+          arn: ${self:custom.sqs_arn}
+          batchSize: 1
+
+  create-task:
+    handler: src/handlers/http/task/create.call
+    events:
+      - http:
+          path: task
+          method: post
+          cors: true
+
+  update-task:
+    handler: src/handlers/http/task/update.call
+    events:
+      - http:
+          path: task/{id}
+          method: put
+          cors: true
+
+  delete-task:
+    handler: src/handlers/http/task/delete.call
+    events:
+      - http:
+          path: task/{id}
+          method: delete
+          cors: true
+
+  get-task:
+    handler: src/handlers/http/task/get.call
+    events:
+      - http:
+          path: task/{id}
+          method: get
+          cors: true
+
+  get-tasks:
+    handler: src/handlers/http/task/index.call
+    events:
+      - http:
+          path: tasks
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    S3Queue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "S3Queue"
+    TasksTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.tableName}
